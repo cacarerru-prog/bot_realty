@@ -1,0 +1,9 @@
+{
+  "telegram_token": "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER",
+  "chat_id": 0,
+  "poll_interval_seconds": 60,
+  "city": "Минск",
+  "price_min": 0,
+  "price_max": 80000,
+  "sources": ["onliner", "kufar"]
+}

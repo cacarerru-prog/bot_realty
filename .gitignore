@@ -1,0 +1,12 @@
+# секреты и локальные данные
+config.json
+seen.json
+
+# сборка и временные файлы
+/bot
+/bot.exe
+flatradar.exe
+flatradar_linux
+run.log
+run.err
+flatradar.log

@@ -1,0 +1,15 @@
+[Unit]
+Description=FlatRadar Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=flatradar
+WorkingDirectory=/opt/flatradar
+ExecStart=/opt/flatradar/flatradar
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

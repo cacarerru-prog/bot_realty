@@ -1,0 +1,7 @@
+flatradar.exe
+flatradar
+*.log
+run.err
+seen.json
+config.json
+.git
