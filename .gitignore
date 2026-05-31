@@ -6,6 +6,7 @@ seen*.json
 /bot
 /bot.exe
 flatradar.exe
+flatradar-tray.exe
 flatradar_linux
 run.log
 run.err
