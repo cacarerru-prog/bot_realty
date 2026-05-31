@@ -44,9 +44,8 @@ func Load(path string) (Config, error) {
 	if c.TelegramToken == "" {
 		return c, fmt.Errorf("в конфиге не задан telegram_token")
 	}
-	if c.ChatID == 0 {
-		return c, fmt.Errorf("в конфиге не задан chat_id")
-	}
+	// chat_id больше не обязателен: бот многопользовательский, подписчики
+	// регистрируются сами командой /start.
 	if c.PollSeconds <= 0 {
 		c.PollSeconds = 60
 	}

@@ -12,19 +12,17 @@ import (
 	"flatradar/internal/model"
 )
 
-// Client — клиент Telegram Bot API: умеет отправлять сообщения
-// и слушать команды (long polling). Без внешних зависимостей.
+// Client — клиент Telegram Bot API: отправляет сообщения произвольным
+// чатам и слушает команды (long polling). Без внешних зависимостей.
 type Client struct {
 	token  string
-	chatID int64
 	client *http.Client
 }
 
 // New создаёт клиент.
-func New(token string, chatID int64) *Client {
+func New(token string) *Client {
 	return &Client{
 		token:  token,
-		chatID: chatID,
 		client: &http.Client{Timeout: 40 * time.Second},
 	}
 }
@@ -33,13 +31,13 @@ func (c *Client) apiURL(method string) string {
 	return fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
 }
 
-// SendText отправляет произвольный HTML-текст в чат.
-func (c *Client) SendText(ctx context.Context, text string) error {
-	return c.sendMessage(ctx, text, nil)
+// SendText отправляет HTML-текст в указанный чат.
+func (c *Client) SendText(ctx context.Context, chatID int64, text string) error {
+	return c.sendMessage(ctx, chatID, text, nil)
 }
 
-// SendMenu отправляет приветствие с кнопочной панелью (reply keyboard).
-func (c *Client) SendMenu(ctx context.Context, text string) error {
+// SendMenu отправляет текст с кнопочной панелью (reply keyboard).
+func (c *Client) SendMenu(ctx context.Context, chatID int64, text string) error {
 	keyboard := map[string]any{
 		"keyboard": [][]map[string]string{
 			{{"text": "📊 Статус"}, {"text": "🌐 Площадки"}},
@@ -48,13 +46,18 @@ func (c *Client) SendMenu(ctx context.Context, text string) error {
 		},
 		"resize_keyboard": true,
 	}
-	return c.sendMessage(ctx, text, keyboard)
+	return c.sendMessage(ctx, chatID, text, keyboard)
+}
+
+// NotifyListing форматирует и отправляет объявление в указанный чат.
+func (c *Client) NotifyListing(ctx context.Context, chatID int64, l model.Listing) error {
+	return c.sendMessage(ctx, chatID, formatListing(l), nil)
 }
 
 // sendMessage — низкоуровневая отправка с опциональной клавиатурой.
-func (c *Client) sendMessage(ctx context.Context, text string, replyMarkup any) error {
+func (c *Client) sendMessage(ctx context.Context, chatID int64, text string, replyMarkup any) error {
 	payload := map[string]any{
-		"chat_id":                  c.chatID,
+		"chat_id":                  chatID,
 		"text":                     text,
 		"parse_mode":               "HTML",
 		"disable_web_page_preview": false,
@@ -84,14 +87,14 @@ func (c *Client) sendMessage(ctx context.Context, text string, replyMarkup any) 
 	return nil
 }
 
-// SetCommands регистрирует список команд — он появляется в меню «/»
-// (кнопка Menu) рядом с полем ввода.
+// SetCommands регистрирует список команд — он появляется в меню «/».
 func (c *Client) SetCommands(ctx context.Context) error {
 	cmds := []map[string]string{
+		{"command": "start", "description": "Подписаться и открыть панель"},
 		{"command": "menu", "description": "Показать панель кнопок"},
-		{"command": "status", "description": "Статус и текущие настройки"},
+		{"command": "status", "description": "Мои настройки и статус"},
 		{"command": "sources", "description": "Подключённые площадки"},
-		{"command": "last", "description": "Последние найденные объявления"},
+		{"command": "last", "description": "Свежие объявления под мой фильтр"},
 		{"command": "pause", "description": "Приостановить уведомления"},
 		{"command": "resume", "description": "Возобновить уведомления"},
 		{"command": "price", "description": "Изменить макс. цену, напр. /price 60000"},
@@ -115,11 +118,6 @@ func (c *Client) SetCommands(ctx context.Context) error {
 		return fmt.Errorf("telegram: setMyCommands статус %d", resp.StatusCode)
 	}
 	return nil
-}
-
-// NotifyListing форматирует и отправляет объявление.
-func (c *Client) NotifyListing(ctx context.Context, l model.Listing) error {
-	return c.SendText(ctx, formatListing(l))
 }
 
 func formatListing(l model.Listing) string {

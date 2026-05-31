@@ -9,8 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"flatradar/internal/model"
 	"flatradar/internal/state"
+	"flatradar/internal/users"
 )
+
+// LatestFunc возвращает до n свежих объявлений под фильтр пользователя.
+type LatestFunc func(ctx context.Context, chatID int64, n int) []model.Listing
+
+// WarmupFunc помечает текущие объявления показанными новому пользователю,
+// чтобы он не получил лавину старых лотов сразу после подписки.
+type WarmupFunc func(ctx context.Context, chatID int64)
 
 type update struct {
 	UpdateID int64 `json:"update_id"`
@@ -27,9 +36,18 @@ type updatesResp struct {
 	Result []update `json:"result"`
 }
 
+// Deps — зависимости обработчика команд.
+type Deps struct {
+	Users  *users.Manager
+	State  *state.State
+	Latest LatestFunc
+	Warmup WarmupFunc
+	Log    func(string, ...any)
+}
+
 // ListenCommands слушает входящие сообщения (long polling) и выполняет
 // команды управления. Блокируется до отмены ctx — запускать в горутине.
-func (c *Client) ListenCommands(ctx context.Context, st *state.State, log func(string, ...any)) {
+func (c *Client) ListenCommands(ctx context.Context, d Deps) {
 	var offset int64
 	for {
 		select {
@@ -43,7 +61,7 @@ func (c *Client) ListenCommands(ctx context.Context, st *state.State, log func(s
 			if ctx.Err() != nil {
 				return
 			}
-			log("telegram: getUpdates: %v", err)
+			d.Log("telegram: getUpdates: %v", err)
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -53,11 +71,7 @@ func (c *Client) ListenCommands(ctx context.Context, st *state.State, log func(s
 			if u.Message == nil {
 				continue
 			}
-			// Реагируем только на свой чат (защита от чужих).
-			if u.Message.Chat.ID != c.chatID {
-				continue
-			}
-			c.handle(ctx, st, strings.TrimSpace(u.Message.Text))
+			c.handle(ctx, d, u.Message.Chat.ID, strings.TrimSpace(u.Message.Text))
 		}
 	}
 }
@@ -86,29 +100,33 @@ func (c *Client) getUpdates(ctx context.Context, offset int64) ([]update, error)
 
 // buttonToCommand сопоставляет подписи кнопок панели с командами.
 var buttonToCommand = map[string]string{
-	"📊 Статус":      "/status",
-	"🌐 Площадки":    "/sources",
-	"⏸ Пауза":       "/pause",
+	"📊 Статус":       "/status",
+	"🌐 Площадки":     "/sources",
+	"⏸ Пауза":        "/pause",
 	"▶️ Возобновить": "/resume",
-	"🆕 Последние":   "/last",
-	"❓ Помощь":      "/help",
+	"🆕 Последние":    "/last",
+	"❓ Помощь":       "/help",
 }
 
-func (c *Client) handle(ctx context.Context, st *state.State, text string) {
+func (c *Client) handle(ctx context.Context, d Deps, chatID int64, text string) {
 	if text == "" {
 		return
 	}
-	// Нажатие кнопки панели присылает её подпись — превращаем в команду.
+	// Любой написавший — авто-подписка; нового сразу «прогреваем».
+	if d.Users.Ensure(chatID) && d.Warmup != nil {
+		d.Warmup(ctx, chatID)
+	}
+
 	if mapped, ok := buttonToCommand[text]; ok {
 		text = mapped
 	}
-
 	fields := strings.Fields(text)
 	cmd := strings.ToLower(fields[0])
 
-	// Панель с кнопками отправляем сразу, без текстового ответа.
 	if cmd == "/start" || cmd == "/menu" {
-		_ = c.SendMenu(ctx, "<b>FlatRadar</b> — панель управления.\nВыбери действие кнопкой ниже или command-меню «/».")
+		_ = c.SendMenu(ctx, chatID, "<b>FlatRadar</b> — бот ищет новые квартиры в продаже.\n"+
+			"Я подписал тебя на уведомления. Настрой цену командой <code>/price 60000</code> и жди новые лоты.\n"+
+			"Управление — кнопками ниже или меню «/».")
 		return
 	}
 
@@ -118,28 +136,28 @@ func (c *Client) handle(ctx context.Context, st *state.State, text string) {
 		reply = helpText()
 
 	case "/sources":
-		reply = sourcesText(st)
+		reply = sourcesText(d.State)
 
 	case "/status":
-		s := st.Snapshot()
+		u, _ := d.Users.Get(chatID)
 		status := "▶️ активен"
-		if s.Paused {
+		if u.Paused {
 			status = "⏸ на паузе"
 		}
 		reply = fmt.Sprintf(
-			"<b>FlatRadar — статус</b>\n"+
+			"<b>Мои настройки</b>\n"+
 				"Состояние: %s\n"+
 				"Город: %s\n"+
 				"Цена: %s–%s $\n"+
-				"Отправлено за сессию: %d",
-			status, s.City, formatPrice(s.PriceMin), formatPrice(s.PriceMax), s.Sent)
+				"Прислано: %d",
+			status, u.City, formatPrice(u.PriceMin), formatPrice(u.PriceMax), u.Sent)
 
 	case "/pause":
-		st.SetPaused(true)
+		d.Users.SetPaused(chatID, true)
 		reply = "⏸ Уведомления приостановлены. /resume — возобновить."
 
 	case "/resume":
-		st.SetPaused(false)
+		d.Users.SetPaused(chatID, false)
 		reply = "▶️ Уведомления возобновлены."
 
 	case "/price":
@@ -152,18 +170,21 @@ func (c *Client) handle(ctx context.Context, st *state.State, text string) {
 			reply = "Не понял число. Пример: <code>/price 60000</code>"
 			break
 		}
-		st.SetPriceMax(v)
+		d.Users.SetPriceMax(chatID, v)
 		reply = fmt.Sprintf("✅ Максимальная цена теперь %s $.", formatPrice(v))
 
 	case "/last":
-		recent := st.Recent(5)
-		if len(recent) == 0 {
-			reply = "Пока ничего не найдено за эту сессию."
+		var listings []model.Listing
+		if d.Latest != nil {
+			listings = d.Latest(ctx, chatID, 5)
+		}
+		if len(listings) == 0 {
+			reply = "Сейчас подходящих объявлений на площадках нет."
 			break
 		}
 		var b strings.Builder
-		b.WriteString("<b>Последние находки:</b>\n\n")
-		for _, l := range recent {
+		b.WriteString("<b>🆕 Свежие объявления под твой фильтр:</b>\n\n")
+		for _, l := range listings {
 			b.WriteString(formatListing(l))
 			b.WriteString("\n\n")
 		}
@@ -173,21 +194,20 @@ func (c *Client) handle(ctx context.Context, st *state.State, text string) {
 		reply = "Не знаю такую команду. /help — список команд."
 	}
 
-	if err := c.SendText(ctx, reply); err != nil {
-		// тихо игнорируем — не критично
-		_ = err
+	if err := c.SendText(ctx, chatID, reply); err != nil {
+		d.Log("telegram: ответ %d: %v", chatID, err)
 	}
 }
 
 func helpText() string {
 	return "<b>FlatRadar — команды</b>\n" +
 		"/menu — панель с кнопками\n" +
-		"/status — текущие настройки и статус\n" +
+		"/status — мои настройки и статус\n" +
 		"/sources — подключённые площадки\n" +
 		"/pause — приостановить уведомления\n" +
 		"/resume — возобновить уведомления\n" +
 		"/price 60000 — изменить максимальную цену\n" +
-		"/last — последние найденные объявления\n" +
+		"/last — свежие объявления под мой фильтр\n" +
 		"/help — эта справка"
 }
 

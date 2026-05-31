@@ -6,39 +6,38 @@ import (
 	"time"
 
 	"flatradar/internal/collector"
-	"flatradar/internal/filter"
 	"flatradar/internal/model"
 	"flatradar/internal/state"
-	"flatradar/internal/storage"
+	"flatradar/internal/users"
 )
 
-// Notifier — то, что умеет отправлять объявление пользователю.
+// Notifier отправляет объявление конкретному чату.
 type Notifier interface {
-	NotifyListing(ctx context.Context, l model.Listing) error
+	NotifyListing(ctx context.Context, chatID int64, l model.Listing) error
 }
 
-// Service связывает коллекторы, состояние, хранилище и нотификатор
-// и периодически опрашивает площадки.
+// Service опрашивает площадки и раздаёт объявления подписчикам.
 type Service struct {
 	Collectors []collector.Collector
+	Users      *users.Manager
 	State      *state.State
-	Store      *storage.Store
 	Notifier   Notifier
 	Log        *log.Logger
-	SkipWarmup bool // тестовый режим: отправить текущие подходящие лоты сразу
+	City       string // город опроса (общий для всех)
+	SkipWarmup bool
 }
 
-// Run выполняет «прогрев» (помечает текущие объявления как виденные без
-// уведомлений), затем по тикеру опрашивает площадки и шлёт только новое.
+// Run выполняет прогрев (помечает текущие лоты показанными всем
+// подписчикам без уведомлений), затем по тикеру опрашивает площадки.
 func (s *Service) Run(ctx context.Context, interval time.Duration) {
 	if s.SkipWarmup {
-		s.Log.Printf("ТЕСТ: режим без прогрева — отправляю текущие подходящие лоты")
+		s.Log.Printf("ТЕСТ: режим без прогрева")
 		s.poll(ctx, true)
 	} else {
-		s.Log.Printf("прогрев: помечаем текущие объявления как виденные…")
+		s.Log.Printf("прогрев: помечаем текущие лоты показанными подписчикам…")
 		s.poll(ctx, false)
 	}
-	s.Log.Printf("слежу за новыми (интервал %s)", interval)
+	s.Log.Printf("слежу за новыми (интервал %s, подписчиков: %d)", interval, s.Users.Count())
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -54,14 +53,13 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// poll опрашивает все коллекторы один раз.
-// notify=false — режим прогрева: только помечаем, не отправляем.
+// poll опрашивает площадки один раз и раздаёт результат подписчикам.
+// notify=false — прогрев: только помечаем, не отправляем.
 func (s *Service) poll(ctx context.Context, notify bool) {
-	f := collector.Filter{
-		City:     s.State.City(),
-		PriceMin: s.State.PriceMin(),
-		PriceMax: s.State.PriceMax(),
-	}
+	// Широкий фильтр: тянем все лоты города, цену фильтруем на пользователя.
+	f := collector.Filter{City: s.City}
+
+	var all []model.Listing
 	for _, c := range s.Collectors {
 		listings, err := c.Fetch(ctx, f)
 		s.State.UpdateSource(c.Name(), len(listings), err)
@@ -69,36 +67,41 @@ func (s *Service) poll(ctx context.Context, notify bool) {
 			s.Log.Printf("[%s] ошибка: %v", c.Name(), err)
 			continue
 		}
-		s.process(ctx, listings, notify)
+		all = append(all, listings...)
 	}
+
+	for _, u := range s.Users.All() {
+		for _, l := range all {
+			if s.Users.HasSeen(u.ChatID, l.Key()) {
+				continue
+			}
+			if !matchUser(l, u) {
+				continue
+			}
+			// Отправляем, только если уведомляем и пользователь не на паузе.
+			if notify && !u.Paused {
+				if err := s.Notifier.NotifyListing(ctx, u.ChatID, l); err != nil {
+					s.Log.Printf("[%s] не отправлено %d: %v", l.Source, u.ChatID, err)
+					continue // не помечаем — попробуем в следующий раз
+				}
+				s.Users.IncSent(u.ChatID)
+				s.Log.Printf("[%s] -> %d: %s — %d $", l.Source, u.ChatID, l.Address, l.PriceUSD)
+			}
+			// Помечаем показанным (в т.ч. на паузе и при прогреве),
+			// чтобы после /resume не пришёл накопившийся поток.
+			s.Users.MarkSeen(u.ChatID, l.Key())
+		}
+	}
+	s.Users.Save()
 }
 
-func (s *Service) process(ctx context.Context, listings []model.Listing, notify bool) {
-	crit := filter.Criteria{
-		PriceMin: s.State.PriceMin(),
-		PriceMax: s.State.PriceMax(),
+// matchUser проверяет, подходит ли объявление под фильтр пользователя.
+func matchUser(l model.Listing, u users.User) bool {
+	if l.PriceUSD < u.PriceMin {
+		return false
 	}
-	for _, l := range listings {
-		if s.Store.Seen(l.Key()) {
-			continue
-		}
-		if !filter.Match(l, crit) {
-			continue
-		}
-
-		// На паузе мы не шлём, но помечаем как виденное,
-		// чтобы после /resume не пришёл накопившийся поток.
-		if notify && !s.State.Paused() {
-			if err := s.Notifier.NotifyListing(ctx, l); err != nil {
-				s.Log.Printf("[%s] не отправлено %s: %v", l.Source, l.Key(), err)
-				continue // не помечаем — попробуем в следующий раз
-			}
-			s.State.AddSent(l)
-			s.Log.Printf("[%s] отправлено: %s — %d $", l.Source, l.Address, l.PriceUSD)
-		}
-
-		if err := s.Store.Mark(l.Key()); err != nil {
-			s.Log.Printf("ошибка сохранения %s: %v", l.Key(), err)
-		}
+	if u.PriceMax > 0 && l.PriceUSD > u.PriceMax {
+		return false
 	}
+	return true
 }
