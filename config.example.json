@@ -3,7 +3,7 @@
   "chat_id": 0,
   "poll_interval_seconds": 60,
   "city": "Минск",
-  "price_min": 0,
+  "price_min": 15000,
   "price_max": 80000,
   "sources": ["onliner", "kufar"]
 }

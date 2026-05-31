@@ -72,8 +72,8 @@ func New(configPath string, logger *log.Logger) (*App, error) {
 
 // Run запускает приём команд и опрос площадок. Блокируется до отмены ctx.
 func (a *App) Run(ctx context.Context) {
-	a.log.Printf("FlatRadar запущен. Город: %s, цена до %d $, источники: %v",
-		a.cfg.City, a.cfg.PriceMax, a.cfg.Sources)
+	a.log.Printf("FlatRadar запущен. Город: %s, цена %d–%d $, источники: %v",
+		a.cfg.City, a.cfg.PriceMin, a.cfg.PriceMax, a.cfg.Sources)
 
 	if err := a.tg.SetCommands(ctx); err != nil {
 		a.log.Printf("не удалось установить меню команд: %v", err)

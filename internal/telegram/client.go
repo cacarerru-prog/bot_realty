@@ -143,7 +143,7 @@ func formatListing(l model.Listing) string {
 		l.Area,
 		html.EscapeString(l.Floor),
 		html.EscapeString(l.Address),
-		l.URL,
+		html.EscapeString(l.URL),
 	)
 }
 
