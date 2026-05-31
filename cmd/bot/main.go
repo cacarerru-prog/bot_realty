@@ -72,6 +72,7 @@ func main() {
 		Store:      store,
 		Notifier:   tg,
 		Log:        logger,
+		SkipWarmup: os.Getenv("FLATRADAR_NO_WARMUP") == "1",
 	}
 
 	// Корректная остановка по Ctrl+C / SIGTERM.

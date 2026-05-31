@@ -25,14 +25,20 @@ type Service struct {
 	Store      *storage.Store
 	Notifier   Notifier
 	Log        *log.Logger
+	SkipWarmup bool // тестовый режим: отправить текущие подходящие лоты сразу
 }
 
 // Run выполняет «прогрев» (помечает текущие объявления как виденные без
 // уведомлений), затем по тикеру опрашивает площадки и шлёт только новое.
 func (s *Service) Run(ctx context.Context, interval time.Duration) {
-	s.Log.Printf("прогрев: помечаем текущие объявления как виденные…")
-	s.poll(ctx, false)
-	s.Log.Printf("прогрев завершён, слежу за новыми (интервал %s)", interval)
+	if s.SkipWarmup {
+		s.Log.Printf("ТЕСТ: режим без прогрева — отправляю текущие подходящие лоты")
+		s.poll(ctx, true)
+	} else {
+		s.Log.Printf("прогрев: помечаем текущие объявления как виденные…")
+		s.poll(ctx, false)
+	}
+	s.Log.Printf("слежу за новыми (интервал %s)", interval)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

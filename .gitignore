@@ -1,6 +1,6 @@
 # секреты и локальные данные
 config.json
-seen.json
+seen*.json
 
 # сборка и временные файлы
 /bot

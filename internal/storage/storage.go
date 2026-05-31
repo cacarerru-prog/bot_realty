@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"sync"
@@ -27,6 +28,9 @@ func Open(path string) (*Store, error) {
 		}
 		return nil, err
 	}
+
+	// Снимаем UTF-8 BOM, если файл правили внешним редактором (Windows).
+	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
 	var keys []string
 	if err := json.Unmarshal(data, &keys); err != nil {
