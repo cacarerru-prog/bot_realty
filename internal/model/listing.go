@@ -11,7 +11,9 @@ type Listing struct {
 	PriceUSD   int       // цена в долларах США
 	Rooms      int       // количество комнат (0 = неизвестно/студия)
 	Area       float64   // общая площадь, м²
-	Floor      string    // этаж в формате "5/9"
+	Floor      string    // этаж в формате "5/9" — для отображения
+	FloorNum   int       // этаж квартиры числом (0 = неизвестно)
+	FloorTotal int       // этажность дома числом (0 = неизвестно)
 	Address    string    // адрес
 	URL        string    // ссылка на объявление
 	Photo      string    // ссылка на превью-фото

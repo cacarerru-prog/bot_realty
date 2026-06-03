@@ -50,8 +50,44 @@ func (c *Client) SendMenu(ctx context.Context, chatID int64, text string) error 
 }
 
 // NotifyListing форматирует и отправляет объявление в указанный чат.
+// Если у лота есть фото — шлём карточкой с картинкой, иначе текстом.
 func (c *Client) NotifyListing(ctx context.Context, chatID int64, l model.Listing) error {
-	return c.sendMessage(ctx, chatID, formatListing(l), nil)
+	text := formatListing(l)
+	if l.Photo != "" {
+		if err := c.sendPhoto(ctx, chatID, l.Photo, text); err == nil {
+			return nil
+		}
+		// Фото не ушло (битая ссылка/таймаут) — отправим хотя бы текст.
+	}
+	return c.sendMessage(ctx, chatID, text, nil)
+}
+
+// sendPhoto отправляет фото с HTML-подписью.
+func (c *Client) sendPhoto(ctx context.Context, chatID int64, photoURL, caption string) error {
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"photo":      photoURL,
+		"caption":    caption,
+		"parse_mode": "HTML",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL("sendPhoto"), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram: sendPhoto: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram: sendPhoto статус %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // sendMessage — низкоуровневая отправка с опциональной клавиатурой.
@@ -97,7 +133,12 @@ func (c *Client) SetCommands(ctx context.Context) error {
 		{"command": "last", "description": "Свежие объявления под мой фильтр"},
 		{"command": "pause", "description": "Приостановить уведомления"},
 		{"command": "resume", "description": "Возобновить уведомления"},
-		{"command": "price", "description": "Изменить макс. цену, напр. /price 60000"},
+		{"command": "price", "description": "Цена: /price 60000 или /price 30000 80000"},
+		{"command": "rooms", "description": "Комнаты: /rooms 2 3"},
+		{"command": "area", "description": "Площадь: /area 40 70"},
+		{"command": "district", "description": "Район/адрес: /district Фрунзенский"},
+		{"command": "floor", "description": "Исключить первый/последний этаж"},
+		{"command": "reset", "description": "Сбросить все фильтры"},
 		{"command": "help", "description": "Справка по командам"},
 	}
 	body, err := json.Marshal(map[string]any{"commands": cmds})

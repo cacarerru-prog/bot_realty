@@ -6,7 +6,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync"
+
+	"flatradar/internal/model"
 )
 
 // seenCap — сколько ключей объявлений держим на пользователя (FIFO).
@@ -21,17 +24,60 @@ type Defaults struct {
 	PriceMax int
 }
 
-// User — один подписчик.
+// User — один подписчик. Все поля фильтра ниже — персональные;
+// пустое/нулевое значение означает «не ограничивать».
 type User struct {
 	ChatID   int64    `json:"chat_id"`
 	City     string   `json:"city"`
 	PriceMin int      `json:"price_min"`
 	PriceMax int      `json:"price_max"`
+	Rooms    []int    `json:"rooms,omitempty"`    // допустимое число комнат (пусто = любое)
+	AreaMin  float64  `json:"area_min,omitempty"` // мин. площадь, м²
+	AreaMax  float64  `json:"area_max,omitempty"` // макс. площадь, м²
+	District string   `json:"district,omitempty"` // подстрока адреса (район/улица/ЖК)
+	NoEdge   bool     `json:"no_edge,omitempty"`  // исключать первый и последний этаж
 	Paused   bool     `json:"paused"`
 	Sent     int      `json:"sent"`
 	Seen     []string `json:"seen"` // FIFO ключей показанных объявлений
 
 	seenSet map[string]bool // индекс для быстрого поиска (не сериализуется)
+}
+
+// Matches проверяет, подходит ли объявление под все фильтры пользователя.
+func (u User) Matches(l model.Listing) bool {
+	if l.PriceUSD < u.PriceMin {
+		return false
+	}
+	if u.PriceMax > 0 && l.PriceUSD > u.PriceMax {
+		return false
+	}
+	if len(u.Rooms) > 0 {
+		ok := false
+		for _, r := range u.Rooms {
+			if l.Rooms == r {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if u.AreaMin > 0 && l.Area > 0 && l.Area < u.AreaMin {
+		return false
+	}
+	if u.AreaMax > 0 && l.Area > u.AreaMax {
+		return false
+	}
+	if u.District != "" && !strings.Contains(strings.ToLower(l.Address), strings.ToLower(u.District)) {
+		return false
+	}
+	if u.NoEdge && l.FloorNum > 0 && l.FloorTotal > 0 {
+		if l.FloorNum == 1 || l.FloorNum == l.FloorTotal {
+			return false
+		}
+	}
+	return true
 }
 
 // Manager управляет всеми пользователями и их персистентностью.
@@ -129,11 +175,70 @@ func (m *Manager) SetPaused(chatID int64, v bool) {
 	}
 }
 
-func (m *Manager) SetPriceMax(chatID int64, v int) {
+// SetPriceRange задаёт минимальную и максимальную цену (0 в max = без верха).
+func (m *Manager) SetPriceRange(chatID int64, min, max int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if u := m.users[chatID]; u != nil {
-		u.PriceMax = v
+		u.PriceMin = min
+		u.PriceMax = max
+		m.saveLocked()
+	}
+}
+
+// SetRooms задаёт допустимое число комнат (nil/пусто = любое).
+func (m *Manager) SetRooms(chatID int64, rooms []int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u := m.users[chatID]; u != nil {
+		u.Rooms = rooms
+		m.saveLocked()
+	}
+}
+
+// SetArea задаёт диапазон площади в м² (0 = без ограничения).
+func (m *Manager) SetArea(chatID int64, min, max float64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u := m.users[chatID]; u != nil {
+		u.AreaMin = min
+		u.AreaMax = max
+		m.saveLocked()
+	}
+}
+
+// SetDistrict задаёт подстроку адреса (пусто = без ограничения).
+func (m *Manager) SetDistrict(chatID int64, v string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u := m.users[chatID]; u != nil {
+		u.District = v
+		m.saveLocked()
+	}
+}
+
+// SetNoEdge включает/выключает исключение первого и последнего этажа.
+func (m *Manager) SetNoEdge(chatID int64, v bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u := m.users[chatID]; u != nil {
+		u.NoEdge = v
+		m.saveLocked()
+	}
+}
+
+// ResetFilters сбрасывает фильтры пользователя к значениям по умолчанию.
+func (m *Manager) ResetFilters(chatID int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if u := m.users[chatID]; u != nil {
+		u.PriceMin = m.defaults.PriceMin
+		u.PriceMax = m.defaults.PriceMax
+		u.Rooms = nil
+		u.AreaMin = 0
+		u.AreaMax = 0
+		u.District = ""
+		u.NoEdge = false
 		m.saveLocked()
 	}
 }

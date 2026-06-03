@@ -75,7 +75,7 @@ func (s *Service) poll(ctx context.Context, notify bool) {
 			if s.Users.HasSeen(u.ChatID, l.Key()) {
 				continue
 			}
-			if !matchUser(l, u) {
+			if !u.Matches(l) {
 				continue
 			}
 			// Отправляем, только если уведомляем и пользователь не на паузе.
@@ -93,15 +93,4 @@ func (s *Service) poll(ctx context.Context, notify bool) {
 		}
 	}
 	s.Users.Save()
-}
-
-// matchUser проверяет, подходит ли объявление под фильтр пользователя.
-func matchUser(l model.Listing, u users.User) bool {
-	if l.PriceUSD < u.PriceMin {
-		return false
-	}
-	if u.PriceMax > 0 && l.PriceUSD > u.PriceMax {
-		return false
-	}
-	return true
 }
