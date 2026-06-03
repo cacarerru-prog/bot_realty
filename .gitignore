@@ -8,6 +8,7 @@ users.json
 /bot.exe
 flatradar.exe
 flatradar-tray.exe
+*.exe~
 flatradar_linux
 run.log
 run.err
