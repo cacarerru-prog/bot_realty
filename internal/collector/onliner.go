@@ -102,6 +102,8 @@ func (o *Onliner) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) 
 			Rooms:      a.NumberOfRooms,
 			Area:       a.Area.Total,
 			Floor:      fmt.Sprintf("%d/%d", a.Floor, a.NumberOfFloors),
+			FloorNum:   a.Floor,
+			FloorTotal: a.NumberOfFloors,
 			Address:    a.Location.Address,
 			URL:        a.URL,
 			Photo:      a.Photo,

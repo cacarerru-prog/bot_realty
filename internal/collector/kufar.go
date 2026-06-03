@@ -42,11 +42,16 @@ type kufarAd struct {
 	ListTime          string       `json:"list_time"`
 	AdParameters      []kufarParam `json:"ad_parameters"`
 	AccountParameters []kufarParam `json:"account_parameters"`
+	Images            []kufarImage `json:"images"`
+}
+
+type kufarImage struct {
+	Path string `json:"path"` // напр. "adim1/<uuid>.jpg"
 }
 
 type kufarParam struct {
 	P string `json:"p"`
-	V any    `json:"v"` // может быть строкой или числом
+	V any    `json:"v"` // строка, число или массив (напр. floor: [4])
 }
 
 func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
@@ -81,7 +86,16 @@ func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
 
 		rooms, _ := strconv.Atoi(paramStr(a.AdParameters, "rooms"))
 		area, _ := strconv.ParseFloat(paramStr(a.AdParameters, "size"), 64)
-		floor := paramStr(a.AdParameters, "floor")
+		// floor и re_number_floors приходят массивом из одного числа.
+		floorNum := paramFirstInt(a.AdParameters, "floor")
+		floorTotal := paramFirstInt(a.AdParameters, "re_number_floors")
+		floor := ""
+		if floorNum > 0 {
+			floor = strconv.Itoa(floorNum)
+			if floorTotal > 0 {
+				floor += "/" + strconv.Itoa(floorTotal)
+			}
+		}
 		address := paramStr(a.AccountParameters, "address")
 		if address == "" {
 			address = a.Subject
@@ -97,8 +111,11 @@ func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
 			Rooms:      rooms,
 			Area:       area,
 			Floor:      floor,
+			FloorNum:   floorNum,
+			FloorTotal: floorTotal,
 			Address:    address,
 			URL:        a.AdLink,
+			Photo:      kufarPhoto(a.Images),
 			CreatedAt:  createdAt,
 		})
 	}
@@ -119,4 +136,41 @@ func paramStr(params []kufarParam, name string) string {
 		}
 	}
 	return ""
+}
+
+// paramFirstInt достаёт первое целое из параметра-массива (напр. floor: [4]).
+// Поддерживает и одиночное число на случай изменения формата.
+func paramFirstInt(params []kufarParam, name string) int {
+	for _, p := range params {
+		if p.P != name {
+			continue
+		}
+		switch v := p.V.(type) {
+		case float64:
+			return int(v)
+		case string:
+			n, _ := strconv.Atoi(v)
+			return n
+		case []any:
+			if len(v) > 0 {
+				if f, ok := v[0].(float64); ok {
+					return int(f)
+				}
+				if s, ok := v[0].(string); ok {
+					n, _ := strconv.Atoi(s)
+					return n
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// kufarPhoto строит ссылку на превью первого фото объявления.
+// rms-хранилище отдаёт картинку по /v1/gallery/<path> (через 302 на rms1).
+func kufarPhoto(images []kufarImage) string {
+	if len(images) == 0 || images[0].Path == "" {
+		return ""
+	}
+	return "https://rms.kufar.by/v1/gallery/" + images[0].Path
 }

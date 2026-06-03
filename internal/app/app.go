@@ -130,7 +130,7 @@ func (a *App) latest(ctx context.Context, chatID int64, n int) []model.Listing {
 	}
 	var matched []model.Listing
 	for _, l := range a.fetchAll(ctx) {
-		if l.PriceUSD < u.PriceMin || (u.PriceMax > 0 && l.PriceUSD > u.PriceMax) {
+		if !u.Matches(l) {
 			continue
 		}
 		matched = append(matched, l)
