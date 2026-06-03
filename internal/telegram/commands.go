@@ -30,6 +30,19 @@ type update struct {
 		} `json:"chat"`
 		Text string `json:"text"`
 	} `json:"message"`
+	CallbackQuery *callbackQuery `json:"callback_query"`
+}
+
+// callbackQuery — нажатие на инлайн-кнопку.
+type callbackQuery struct {
+	ID      string `json:"id"`
+	Data    string `json:"data"`
+	Message *struct {
+		MessageID int64 `json:"message_id"`
+		Chat      struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+	} `json:"message"`
 }
 
 type updatesResp struct {
@@ -69,6 +82,10 @@ func (c *Client) ListenCommands(ctx context.Context, d Deps) {
 
 		for _, u := range updates {
 			offset = u.UpdateID + 1
+			if u.CallbackQuery != nil {
+				c.handleCallback(ctx, d, u.CallbackQuery)
+				continue
+			}
 			if u.Message == nil {
 				continue
 			}
@@ -101,6 +118,7 @@ func (c *Client) getUpdates(ctx context.Context, offset int64) ([]update, error)
 
 // buttonToCommand сопоставляет подписи кнопок панели с командами.
 var buttonToCommand = map[string]string{
+	"🔍 Фильтры":      "/filters",
 	"📊 Статус":       "/status",
 	"🌐 Площадки":     "/sources",
 	"⏸ Пауза":        "/pause",
@@ -126,8 +144,16 @@ func (c *Client) handle(ctx context.Context, d Deps, chatID int64, text string) 
 
 	if cmd == "/start" || cmd == "/menu" {
 		_ = c.SendMenu(ctx, chatID, "<b>FlatRadar</b> — бот ищет новые квартиры в продаже.\n"+
-			"Я подписал тебя на уведомления. Настрой цену командой <code>/price 60000</code> и жди новые лоты.\n"+
+			"Я подписал тебя на уведомления. Настрой фильтр кнопкой «🔍 Фильтры» и жди новые лоты.\n"+
 			"Управление — кнопками ниже или меню «/».")
+		return
+	}
+
+	if cmd == "/filters" {
+		u, _ := d.Users.Get(chatID)
+		if err := c.sendMessage(ctx, chatID, filterPanelText(u), filterKeyboard(u)); err != nil {
+			d.Log("telegram: панель фильтров %d: %v", chatID, err)
+		}
 		return
 	}
 
@@ -231,7 +257,7 @@ func helpText() string {
 		"/last — свежие объявления под мой фильтр\n" +
 		"/pause — приостановить уведомления\n" +
 		"/resume — возобновить уведомления\n\n" +
-		"<b>Фильтры</b>\n" +
+		"<b>Фильтры</b> (или кнопка «🔍 Фильтры» — панель с кнопками)\n" +
 		"/price 60000 — макс. цена (или /price 30000 80000 — диапазон)\n" +
 		"/rooms 2 3 — нужное число комнат (/rooms — любое)\n" +
 		"/area 40 70 — площадь, м² (/area — любая)\n" +

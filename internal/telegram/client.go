@@ -40,6 +40,7 @@ func (c *Client) SendText(ctx context.Context, chatID int64, text string) error 
 func (c *Client) SendMenu(ctx context.Context, chatID int64, text string) error {
 	keyboard := map[string]any{
 		"keyboard": [][]map[string]string{
+			{{"text": "🔍 Фильтры"}},
 			{{"text": "📊 Статус"}, {"text": "🌐 Площадки"}},
 			{{"text": "⏸ Пауза"}, {"text": "▶️ Возобновить"}},
 			{{"text": "🆕 Последние"}, {"text": "❓ Помощь"}},
@@ -123,11 +124,59 @@ func (c *Client) sendMessage(ctx context.Context, chatID int64, text string, rep
 	return nil
 }
 
+// editMessage заменяет текст и инлайн-клавиатуру у ранее отправленного
+// сообщения (для интерактивной панели фильтров).
+func (c *Client) editMessage(ctx context.Context, chatID, messageID int64, text string, replyMarkup any) error {
+	payload := map[string]any{
+		"chat_id":                  chatID,
+		"message_id":               messageID,
+		"text":                     text,
+		"parse_mode":               "HTML",
+		"disable_web_page_preview": true,
+	}
+	if replyMarkup != nil {
+		payload["reply_markup"] = replyMarkup
+	}
+	return c.post(ctx, "editMessageText", payload)
+}
+
+// answerCallback гасит «часики» на инлайн-кнопке после нажатия.
+func (c *Client) answerCallback(ctx context.Context, callbackID, text string) error {
+	payload := map[string]any{"callback_query_id": callbackID}
+	if text != "" {
+		payload["text"] = text
+	}
+	return c.post(ctx, "answerCallbackQuery", payload)
+}
+
+// post — общая отправка JSON-запроса к методу Bot API.
+func (c *Client) post(ctx context.Context, method string, payload any) error {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL(method), bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("telegram: %s: %w", method, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram: %s статус %d", method, resp.StatusCode)
+	}
+	return nil
+}
+
 // SetCommands регистрирует список команд — он появляется в меню «/».
 func (c *Client) SetCommands(ctx context.Context) error {
 	cmds := []map[string]string{
 		{"command": "start", "description": "Подписаться и открыть панель"},
 		{"command": "menu", "description": "Показать панель кнопок"},
+		{"command": "filters", "description": "Панель фильтров с кнопками"},
 		{"command": "status", "description": "Мои настройки и статус"},
 		{"command": "sources", "description": "Подключённые площадки"},
 		{"command": "last", "description": "Свежие объявления под мой фильтр"},
