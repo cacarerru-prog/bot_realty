@@ -15,6 +15,7 @@ import (
 	"flatradar/internal/model"
 	"flatradar/internal/scheduler"
 	"flatradar/internal/state"
+	"flatradar/internal/store"
 	"flatradar/internal/telegram"
 	"flatradar/internal/users"
 )
@@ -25,6 +26,7 @@ type App struct {
 	tg         *telegram.Client
 	users      *users.Manager
 	state      *state.State
+	store      *store.Store
 	svc        *scheduler.Service
 	collectors []collector.Collector
 	log        *log.Logger
@@ -49,6 +51,11 @@ func New(configPath string, logger *log.Logger) (*App, error) {
 	st := state.New()
 	tg := telegram.New(cfg.TelegramToken)
 
+	db, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+
 	var collectors []collector.Collector
 	for _, src := range cfg.Sources {
 		switch src {
@@ -72,8 +79,11 @@ func New(configPath string, logger *log.Logger) (*App, error) {
 		Users:      usrs,
 		State:      st,
 		Notifier:   tg,
+		Store:      db,
 		Log:        logger,
 		City:       cfg.City,
+		BelowPct:   cfg.BelowMarketPct,
+		MinSample:  cfg.MinSample,
 		SkipWarmup: os.Getenv("FLATRADAR_NO_WARMUP") == "1",
 	}
 
@@ -82,10 +92,18 @@ func New(configPath string, logger *log.Logger) (*App, error) {
 		tg:         tg,
 		users:      usrs,
 		state:      st,
+		store:      db,
 		svc:        svc,
 		collectors: collectors,
 		log:        logger,
 	}, nil
+}
+
+// Close освобождает ресурсы (БД). Вызывать после Run.
+func (a *App) Close() {
+	if a.store != nil {
+		_ = a.store.Close()
+	}
 }
 
 // Run запускает приём команд и опрос площадок. Блокируется до отмены ctx.
@@ -103,6 +121,9 @@ func (a *App) Run(ctx context.Context) {
 		Warmup: a.warmupUser,
 		Log:    a.log.Printf,
 	})
+
+	// Фоновый полный скан рынка — для истории цен и отметки «ушедших».
+	go a.svc.RunScanner(ctx, a.cfg.ScanInterval())
 
 	a.svc.Run(ctx, a.cfg.PollInterval())
 }

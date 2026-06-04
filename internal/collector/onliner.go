@@ -33,7 +33,9 @@ type onlinerResp struct {
 type onlinerApartment struct {
 	ID       int64 `json:"id"`
 	Location struct {
-		Address string `json:"address"`
+		Address   string  `json:"address"`
+		Latitude  float64 `json:"latitude"`
+		Longitude float64 `json:"longitude"`
 	} `json:"location"`
 	Price struct {
 		Converted struct {
@@ -54,7 +56,11 @@ type onlinerApartment struct {
 }
 
 func (o *Onliner) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
-	const url = "https://pk.api.onliner.by/search/apartments?order=created_at:desc&page=1"
+	page := f.Page
+	if page < 1 {
+		page = 1
+	}
+	url := fmt.Sprintf("https://pk.api.onliner.by/search/apartments?order=created_at:desc&page=%d", page)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -107,6 +113,8 @@ func (o *Onliner) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) 
 			Address:    a.Location.Address,
 			URL:        a.URL,
 			Photo:      a.Photo,
+			Lat:        a.Location.Latitude,
+			Lon:        a.Location.Longitude,
 			CreatedAt:  createdAt,
 		})
 	}

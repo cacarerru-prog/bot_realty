@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"html"
 	"net/http"
+	"strings"
 	"time"
 
 	"flatradar/internal/model"
@@ -211,28 +212,92 @@ func (c *Client) SetCommands(ctx context.Context) error {
 }
 
 func formatListing(l model.Listing) string {
-	source := map[string]string{
+	var b strings.Builder
+
+	// Шапка: тип квартиры · площадь · этаж.
+	head := []string{roomsLabel(l.Rooms)}
+	if l.Area > 0 {
+		head = append(head, fmt.Sprintf("%.0f м²", l.Area))
+	}
+	if l.Floor != "" {
+		head = append(head, l.Floor+" этаж")
+	}
+	b.WriteString("🏠 <b>" + html.EscapeString(strings.Join(head, " · ")) + "</b>\n")
+
+	// Цена + метка «ниже рынка».
+	b.WriteString("💰 " + formatPrice(l.PriceUSD) + " $")
+	if l.Stats != nil && l.Stats.BelowMarket > 0 {
+		b.WriteString(fmt.Sprintf("  🔥 −%d%% к рынку", l.Stats.BelowMarket))
+	}
+	b.WriteString("\n")
+
+	if l.Address != "" {
+		b.WriteString("📍 " + html.EscapeString(l.Address) + "\n")
+	}
+	b.WriteString(fmt.Sprintf("🔗 <a href=\"%s\">%s</a>", html.EscapeString(l.URL), html.EscapeString(sourceName(l.Source))))
+
+	if line := statsLine(l.Stats, l.PriceUSD); line != "" {
+		b.WriteString("\n📊 " + line)
+	}
+	return b.String()
+}
+
+// sourceName — отображаемое имя площадки.
+func sourceName(src string) string {
+	if name := map[string]string{
 		"onliner": "Onliner",
 		"kufar":   "Kufar",
 		"realt":   "Realt",
-	}[l.Source]
-	if source == "" {
-		source = l.Source
+	}[src]; name != "" {
+		return name
 	}
+	return src
+}
 
-	return fmt.Sprintf(
-		"🏠 <b>Новое объявление</b> (%s)\n"+
-			"💵 %s $ · %d комн · %.0f м² · %s эт\n"+
-			"📍 %s\n"+
-			"🔗 %s",
-		html.EscapeString(source),
-		formatPrice(l.PriceUSD),
-		l.Rooms,
-		l.Area,
-		html.EscapeString(l.Floor),
-		html.EscapeString(l.Address),
-		html.EscapeString(l.URL),
-	)
+// roomsLabel — «2-к квартира», «Студия» для 0.
+func roomsLabel(rooms int) string {
+	if rooms <= 0 {
+		return "Студия"
+	}
+	return fmt.Sprintf("%d-к квартира", rooms)
+}
+
+// statsLine собирает строку 📊: дни на рынке, снижения цены, минимум.
+func statsLine(st *model.Stats, curPrice int) string {
+	if st == nil {
+		return ""
+	}
+	var parts []string
+	if st.DaysOnMarket <= 0 {
+		parts = append(parts, "Сегодня на рынке")
+	} else {
+		parts = append(parts, fmt.Sprintf("На рынке %d %s", st.DaysOnMarket,
+			plural(st.DaysOnMarket, "день", "дня", "дней")))
+	}
+	if st.PriceDrops > 0 {
+		parts = append(parts, fmt.Sprintf("Цена снижена %d %s", st.PriceDrops,
+			plural(st.PriceDrops, "раз", "раза", "раз")))
+	}
+	if st.MinPriceUSD > 0 && st.MinPriceUSD < curPrice {
+		parts = append(parts, "Минимум: "+formatPrice(st.MinPriceUSD)+" $")
+	}
+	return strings.Join(parts, " | ")
+}
+
+// plural выбирает русскую форму слова по числу: 1 день, 2 дня, 5 дней.
+func plural(n int, one, few, many string) string {
+	n = n % 100
+	if n >= 11 && n <= 14 {
+		return many
+	}
+	switch n % 10 {
+	case 1:
+		return one
+	case 2, 3, 4:
+		return few
+	default:
+		return many
+	}
 }
 
 // formatPrice разбивает число на разряды пробелом: 65000 -> "65 000".

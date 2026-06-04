@@ -25,10 +25,10 @@ func NewKufar() *Kufar {
 func (k *Kufar) Name() string { return "kufar" }
 
 // cat=1010 — продажа квартир; gtsy — гео-фильтр Минска (город);
-// sort=lst.d — сначала свежие; cur=USD — цены в долларах.
-const kufarURL = "https://api.kufar.by/search-api/v2/search/rendered?" +
+// sort=lst.d — сначала свежие; cur=USD — цены в долларах. size подставляем.
+const kufarURLFmt = "https://api.kufar.by/search-api/v2/search/rendered?" +
 	"cat=1010&cur=USD&gtsy=country-belarus~province-minsk~locality-minsk&" +
-	"lang=ru&size=30&sort=lst.d"
+	"lang=ru&size=%d&sort=lst.d"
 
 type kufarResp struct {
 	Ads []kufarAd `json:"ads"`
@@ -55,7 +55,11 @@ type kufarParam struct {
 }
 
 func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, kufarURL, nil)
+	size := f.Size
+	if size <= 0 {
+		size = 30
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf(kufarURLFmt, size), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +106,7 @@ func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
 		}
 
 		createdAt, _ := time.Parse(time.RFC3339, a.ListTime)
+		lon, lat := paramCoords(a.AdParameters, "coordinates")
 
 		out = append(out, model.Listing{
 			Source:     k.Name(),
@@ -116,6 +121,8 @@ func (k *Kufar) Fetch(ctx context.Context, f Filter) ([]model.Listing, error) {
 			Address:    address,
 			URL:        a.AdLink,
 			Photo:      kufarPhoto(a.Images),
+			Lat:        lat,
+			Lon:        lon,
 			CreatedAt:  createdAt,
 		})
 	}
@@ -164,6 +171,21 @@ func paramFirstInt(params []kufarParam, name string) int {
 		}
 	}
 	return 0
+}
+
+// paramCoords достаёт координаты из параметра-массива [lon, lat].
+func paramCoords(params []kufarParam, name string) (lon, lat float64) {
+	for _, p := range params {
+		if p.P != name {
+			continue
+		}
+		if arr, ok := p.V.([]any); ok && len(arr) == 2 {
+			lon, _ = arr[0].(float64)
+			lat, _ = arr[1].(float64)
+		}
+		return lon, lat
+	}
+	return 0, 0
 }
 
 // kufarPhoto строит ссылку на превью первого фото объявления.

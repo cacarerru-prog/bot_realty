@@ -11,6 +11,8 @@ type Filter struct {
 	City     string
 	PriceMin int
 	PriceMax int
+	Page     int // страница выдачи (Onliner), 0/1 — первая
+	Size     int // размер выдачи (Kufar), 0 — значение по умолчанию
 }
 
 // Collector — источник объявлений (одна площадка).

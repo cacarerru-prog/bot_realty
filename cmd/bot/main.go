@@ -31,6 +31,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf("запуск: %v", err)
 	}
+	defer a.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

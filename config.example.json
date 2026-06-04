@@ -5,5 +5,9 @@
   "city": "Минск",
   "price_min": 15000,
   "price_max": 80000,
-  "sources": ["onliner", "kufar"]
+  "sources": ["onliner", "kufar"],
+  "db_path": "flatradar.db",
+  "scan_interval_minutes": 60,
+  "below_market_pct": 7,
+  "min_sample": 5
 }

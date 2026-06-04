@@ -2,6 +2,9 @@
 config.json
 seen*.json
 users.json
+*.db
+*.db-wal
+*.db-shm
 
 # сборка и временные файлы
 /bot
